@@ -1,0 +1,28 @@
+# FILE: docker-compose.yml
+version: '3.8'
+
+services:
+  correlator:
+    # 'build: .' tells Docker Compose to build the image using the Dockerfile in the current directory.
+    build: .
+    container_name: logicore-correlator-service
+    # Use a .env file for the ngrok URL for better security and flexibility
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    ports:
+      # Map the container's port 8001 to the host's port 8001
+      - "8001:8001"
+
+  # Add an ngrok service directly into our compose file for convenience!
+  # This means you won't have to run ngrok in a separate terminal anymore.
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: logicore-ngrok-tunnel
+    ports:
+      - "4040:4040" # This is for the ngrok web interface
+    environment:
+      # Get the authtoken from the .env file
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    # The command to start the ngrok tunnel. It automatically connects to the 'correlator'
+    # service on port 8001 because they are on the same Docker network.
+    command: http correlator:8001
