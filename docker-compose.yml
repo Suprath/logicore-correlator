@@ -2,44 +2,69 @@
 version: '3.8'
 
 services:
-  # The Redis message queue that connects the API and the worker
   redis:
     image: redis:7-alpine
     container_name: logicore-redis
     networks:
       - logicore-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
 
-  # The lightweight API service that just receives webhooks
+  # NEW: PostgreSQL database for storing results
+  postgres:
+    image: postgres:15-alpine
+    container_name: logicore-postgres
+    platform: linux/arm64/v8
+    environment:
+      POSTGRES_DB: correlator_db
+      POSTGRES_USER: correlator_user
+      POSTGRES_PASSWORD: a_very_secure_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - logicore-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U correlator_user -d correlator_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: ./api
     container_name: logicore-api-service
     depends_on:
       - redis
+      - postgres # New dependency
     ports:
-      - "8001:8001" # Expose the API port
+      - "8001:8001"
     networks:
       - logicore-net
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      # NEW: DB connection details for the API
+      - DATABASE_URL=postgresql://correlator_user:a_very_secure_password@postgres:5432/correlator_db
 
-  # The heavy-lifting worker service that runs CodeQL
   worker:
     build:
       context: ./worker
     container_name: logicore-worker-service
     depends_on:
       - redis
+      - postgres # New dependency
     networks:
       - logicore-net
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-    # Give the worker more memory, as CodeQL can be memory intensive
+      # NEW: DB connection details for the worker
+      - DATABASE_URL=postgresql://correlator_user:a_very_secure_password@postgres:5432/correlator_db
     mem_limit: 4g
 
-  # The ngrok tunnel for exposing the API service
   ngrok:
     image: ngrok/ngrok:latest
     container_name: logicore-ngrok-tunnel
@@ -47,10 +72,12 @@ services:
       - "4040:4040"
     environment:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
-    # This now points to the 'api' service on port 8001
     command: http api:8001
     networks:
       - logicore-net
 
 networks:
   logicore-net:
+
+volumes:
+  postgres-data: # New named volume for Postgres
