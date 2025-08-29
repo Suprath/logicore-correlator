@@ -1,0 +1,5 @@
+# FILE: api/requirements.txt
+fastapi==0.110.0
+uvicorn==0.27.1
+celery==5.3.6
+redis==5.0.1

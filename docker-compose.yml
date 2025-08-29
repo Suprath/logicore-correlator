@@ -2,27 +2,55 @@
 version: '3.8'
 
 services:
-  correlator:
-    # 'build: .' tells Docker Compose to build the image using the Dockerfile in the current directory.
-    build: .
-    container_name: logicore-correlator-service
-    # Use a .env file for the ngrok URL for better security and flexibility
-    environment:
-      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
-    ports:
-      # Map the container's port 8001 to the host's port 8001
-      - "8001:8001"
+  # The Redis message queue that connects the API and the worker
+  redis:
+    image: redis:7-alpine
+    container_name: logicore-redis
+    networks:
+      - logicore-net
 
-  # Add an ngrok service directly into our compose file for convenience!
-  # This means you won't have to run ngrok in a separate terminal anymore.
+  # The lightweight API service that just receives webhooks
+  api:
+    build:
+      context: ./api
+    container_name: logicore-api-service
+    depends_on:
+      - redis
+    ports:
+      - "8001:8001" # Expose the API port
+    networks:
+      - logicore-net
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+  # The heavy-lifting worker service that runs CodeQL
+  worker:
+    build:
+      context: ./worker
+    container_name: logicore-worker-service
+    depends_on:
+      - redis
+    networks:
+      - logicore-net
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    # Give the worker more memory, as CodeQL can be memory intensive
+    mem_limit: 4g
+
+  # The ngrok tunnel for exposing the API service
   ngrok:
     image: ngrok/ngrok:latest
     container_name: logicore-ngrok-tunnel
     ports:
-      - "4040:4040" # This is for the ngrok web interface
+      - "4040:4040"
     environment:
-      # Get the authtoken from the .env file
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
-    # The command to start the ngrok tunnel. It automatically connects to the 'correlator'
-    # service on port 8001 because they are on the same Docker network.
-    command: http correlator:8001
+    # This now points to the 'api' service on port 8001
+    command: http api:8001
+    networks:
+      - logicore-net
+
+networks:
+  logicore-net:
