@@ -1,16 +1,16 @@
-# FILE: worker/worker.py
+# FILE: worker/worker.py (Reverted to "Build-on-Demand" Logic)
 import os
 import subprocess
 import tempfile
 import json
 import uuid
-import yaml # <-- IMPORT YAML
+import yaml
 from datetime import datetime
 from celery import Celery
 from sqlalchemy import create_engine, Column, String, Text, DateTime, JSON
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# --- Database and Celery Setup (remains the same) ---
+# --- (Database, Celery, CodeQL, and Rules setup is the same) ---
 DATABASE_URL = os.environ.get("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -24,79 +24,56 @@ class AnalysisResult(Base):
     status = Column(String, default="pending")
     findings = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
-    query_suite_used = Column(String) # NEW: Track which query we ran
+    query_suite_used = Column(String)
 Base.metadata.create_all(bind=engine)
 celery_app = Celery('tasks', broker=os.environ.get("CELERY_BROKER_URL"), backend=os.environ.get("CELERY_RESULT_BACKEND"))
-celery_app.conf.update(task_serializer='json', result_serializer='json', accept_content=['json'])
-
-# --- CodeQL Configuration ---
+celery_app.conf.update(task_serializer='json', result_serializer='json', accept_content=['json'], task_track_started=True)
 CODEQL_CLI_PATH = "codeql"
 CODEQL_QUERIES_ROOT = "/opt/codeql-repo"
-
-# --- NEW: Rules Engine Logic ---
 def load_rules():
-    """Loads the mapping rules from rules.yaml."""
     rules_path = os.path.join(os.path.dirname(__file__), 'rules.yaml')
     try:
-        with open(rules_path, 'r') as f:
-            return yaml.safe_load(f)
+        with open(rules_path, 'r') as f: return yaml.safe_load(f)
     except Exception as e:
         print(f"ERROR: Could not load rules.yaml: {e}", flush=True)
         return None
-
 RULES = load_rules()
-
 def select_query_suite(alert_summary: str) -> str:
-    """Selects the best CodeQL query suite based on the alert summary."""
-    if not RULES or not alert_summary:
-        # Fallback to the default if rules are missing or summary is empty
-        return os.path.join(CODEQL_QUERIES_ROOT, "python/ql/src/python-security-and-quality.qls")
-
+    if not RULES or not alert_summary: return os.path.join(CODEQL_QUERIES_ROOT, "python/ql/src/codeql-suites/python-security-and-quality.qls")
     summary_lower = alert_summary.lower()
-    
     for rule in RULES.get('mappings', []):
         for keyword in rule.get('alert_keywords', []):
             if keyword in summary_lower:
                 print(f"INFO: Matched rule '{rule.get('name')}' on keyword '{keyword}'.", flush=True)
                 return os.path.join(CODEQL_QUERIES_ROOT, rule.get('codeql_suite'))
-    
-    # If no keywords matched, use the one marked 'default'
     for rule in RULES.get('mappings', []):
         if 'default' in rule.get('alert_keywords', []):
             print(f"INFO: No specific rule matched. Using default scan: '{rule.get('name')}'.", flush=True)
             return os.path.join(CODEQL_QUERIES_ROOT, rule.get('codeql_suite'))
+    return os.path.join(CODEQL_QUERIES_ROOT, "python/ql/src/codeql-suites/python-security-and-quality.qls")
 
-    # Final fallback if 'default' isn't even defined
-    return os.path.join(CODEQL_QUERIES_ROOT, "python/ql/src/python-security-and-quality.qls")
-
-
-def run_subprocess(command: list[str], cwd: str = ".") -> int:
-    # ... (function remains the same as before) ...
-    print(f"\n[COMMAND]: {' '.join(command)}", flush=True)
+def run_subprocess_shell(command_string: str, cwd: str = ".") -> int:
+    """Helper function to run a command as a single string through the shell."""
+    print(f"\n[SHELL_COMMAND]: {command_string}", flush=True)
     process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        command_string, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding='utf-8', errors='replace', cwd=cwd
     )
     for line in iter(process.stdout.readline, ''):
         print(line.strip(), flush=True)
     return process.wait()
 
+# --- Main Celery Task (Reverted Logic) ---
 @celery_app.task(name='worker.run_analysis')
 def run_analysis(payload: dict):
     service_name = payload.get("service_name")
     commit_hash = payload.get("commit_hash")
-    alert_summary = payload.get("alert_summary", "") # Default to empty string
-
-    # --- NEW: Select the query suite dynamically ---
+    alert_summary = payload.get("alert_summary", "")
     query_to_run = select_query_suite(alert_summary)
-
     db = SessionLocal()
     new_analysis = AnalysisResult(
-        service_name=service_name,
-        commit_hash=commit_hash,
-        alert_summary=alert_summary,
-        status="running",
-        query_suite_used=query_to_run # Store which query we decided to run
+        service_name=service_name, commit_hash=commit_hash, 
+        alert_summary=alert_summary, status="running", query_suite_used=query_to_run
     )
     db.add(new_analysis)
     db.commit()
@@ -105,22 +82,36 @@ def run_analysis(payload: dict):
     db.close()
     
     print(f"--- [Worker] Starting analysis (ID: {analysis_id}) for {service_name} at {commit_hash} ---", flush=True)
-    print(f"--- [Worker] Using query suite: {query_to_run} ---", flush=True)
 
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
-            # ... (git and codeql database create logic is the same) ...
+            # --- REVERTED WORKFLOW: Clone, Create DB, and Analyze ---
             repo_url = f"https://github.com/{service_name}.git"
             repo_path = os.path.join(temp_dir, "repo")
             db_path = os.path.join(temp_dir, "codeql_db")
-            run_subprocess(["git", "clone", repo_url, repo_path])
-            run_subprocess(["git", "checkout", commit_hash], cwd=repo_path)
-            run_subprocess([CODEQL_CLI_PATH, "database", "create", db_path, "--language=python", f"--source-root={repo_path}"])
+
+            # 1. Clone the repository
+            if run_subprocess_shell(f"git clone {repo_url} {repo_path}") != 0:
+                raise Exception("git clone failed")
             
+            # 2. Check out the specific commit
+            if run_subprocess_shell(f"git checkout {commit_hash}", cwd=repo_path) != 0:
+                raise Exception("git checkout failed")
+
+            # 3. Create the CodeQL Database
+            create_db_cmd_str = f"{CODEQL_CLI_PATH} database create {db_path} --language=python --source-root={repo_path}"
+            if run_subprocess_shell(create_db_cmd_str) != 0:
+                raise Exception("CodeQL database creation failed")
+            
+            # 4. Analyze the database (no need for finalize or bundle, `create` handles it)
             results_path = os.path.join(temp_dir, "results.sarif")
-            # --- MODIFIED: Use the dynamically selected query ---
-            analyze_cmd = [CODEQL_CLI_PATH, "database", "analyze", db_path, query_to_run, f"--format=sarif-latest", f"--output={results_path}"]
-            run_subprocess(analyze_cmd)
+            analyze_cmd_str = (
+                f"{CODEQL_CLI_PATH} database analyze {db_path} "
+                f"{query_to_run} "
+                f"--format=sarif-latest --output={results_path}"
+            )
+            if run_subprocess_shell(analyze_cmd_str) != 0:
+                raise Exception("CodeQL analysis failed.")
             
             print("\n--- [Worker] ANALYSIS COMPLETE. SAVING RESULTS... ---", flush=True)
             with open(results_path, 'r') as f:
@@ -134,7 +125,6 @@ def run_analysis(payload: dict):
             db.close()
 
     except Exception as e:
-        # ... (error handling is the same) ...
         print(f"ERROR: Analysis failed: {e}", flush=True)
         db = SessionLocal()
         analysis_to_update = db.query(AnalysisResult).filter(AnalysisResult.id == analysis_id).first()

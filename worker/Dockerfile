@@ -1,61 +1,50 @@
-# FILE: worker/Dockerfile
+# FILE: worker/Dockerfile (Simplified and Robust Version)
 
-# --- Stage 1: The "Builder" Stage ---
-# Explicitly use the amd64 platform for the builder to match the CodeQL binary
-FROM --platform=linux/amd64 debian:bullseye-slim AS builder
+# Use a standard amd64 Python image. Emulation is necessary for the amd64 CodeQL binary.
+FROM --platform=linux/amd64 python:3.10-slim-bullseye
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Set the working directory AND add it to the python path.
+WORKDIR /app
+ENV PYTHONPATH "${PYTHONPATH}:/app"
 
-# Install tools needed to download and unpack CodeQL
+# [Step 1] Install all system-level dependencies in a single layer.
+# This includes git, curl, and ca-certificates.
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     git \
     curl \
     unzip \
+    zip \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
+# [Step 2] Download and set up CodeQL in a single layer.
+# We will add the CLI to a known path.
 WORKDIR /opt
-
-# Use a recent, stable CodeQL CLI version
 ARG CODEQL_VERSION=v2.17.5
 RUN curl -L -o codeql.zip https://github.com/github/codeql-cli-binaries/releases/download/${CODEQL_VERSION}/codeql-linux64.zip && \
     unzip codeql.zip && \
     rm codeql.zip && \
     mv codeql codeql-cli
-
-
-# --- Stage 2: The "Application" Stage ---
-# CRITICAL FIX: Use the amd64 platform for the final image as well.
-FROM --platform=linux/amd64 python:3.10-slim-bullseye
-
-WORKDIR /app
-
-# Copy the amd64 CodeQL CLI from the amd64 builder stage
-COPY --from=builder /opt/codeql-cli /opt/codeql-cli
-
-# Add the copied CodeQL CLI to the PATH
+# Add CodeQL to the system PATH
 ENV PATH="/opt/codeql-cli:$PATH"
 
-# Install git in the final image, which is needed to clone the queries
-RUN apt-get update && apt-get install -y git --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
-
-# CRITICAL FIX: Clone the QUERIES from the same tagged release as the CLI
-# This bypasses the problematic 'codeql pack download' authentication issue
+# [Step 3] Clone the version-matched CodeQL queries in a single layer.
 ARG CODEQL_VERSION=v2.17.5
 RUN git clone --depth 1 --branch codeql-cli/${CODEQL_VERSION} https://github.com/github/codeql.git /opt/codeql-repo
 
-# Copy and install the Python application dependencies
+# [Step 4] Copy application files and install Python dependencies.
+WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy the main application Python script
 COPY worker.py .
 COPY rules.yaml .
 
-# Expose a port (optional for worker, but good practice)
-# EXPOSE 8000 
+# This is the most critical step for installation.
+RUN pip install --no-cache-dir -r requirements.txt
 
-# The command to run when the container starts. This starts the Celery worker.
+# [Step 5] **DEBUGGING STEP**: List the installed packages to verify.
+# This will show us if 'requests' was actually installed.
+RUN pip list
+
+# [Step 6] Define the final command to run the container.
 CMD ["celery", "-A", "worker.celery_app", "worker", "--loglevel=INFO"]

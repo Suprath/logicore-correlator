@@ -55,6 +55,7 @@ services:
     container_name: logicore-worker-service
     volumes:
       - ./worker/rules.yaml:/app/rules.yaml:ro
+      - ./artifacts:/data/artifacts:ro
     depends_on:
       - redis
       - postgres # New dependency
@@ -65,6 +66,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       # NEW: DB connection details for the worker
       - DATABASE_URL=postgresql://correlator_user:a_very_secure_password@postgres:5432/correlator_db
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
     mem_limit: 4g
 
   ngrok:
