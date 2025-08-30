@@ -23,6 +23,7 @@ class AnalysisResult(Base):
     status = Column(String)
     findings = Column(JSON)
     created_at = Column(DateTime)
+    query_suite_used = Column(String) # <-- ADD THIS LINE
 
 # Dependency for getting a DB session in an endpoint
 def get_db():

@@ -1,0 +1,44 @@
+# FILE: worker/rules.yaml
+
+# This file maps keywords found in an incident alert's summary
+# to the appropriate CodeQL query suite (.qls file) to run.
+# The first rule that has a keyword matching the alert summary will be used.
+
+mappings:
+  # Rule for Security Vulnerabilities
+  - name: "Security and Quality Scan"
+    # If any of these keywords are in the alert summary (case-insensitive)
+    alert_keywords:
+      - "vulnerability"
+      - "suspicious"
+      - "injection"
+      - "xss"
+      - "cross-site"
+    # ...then run this CodeQL query suite.
+    codeql_suite: "python/ql/src/codeql-suites/python-security-and-quality.qls"
+
+  # Rule for Performance Issues
+  - name: "Performance Scan"
+    alert_keywords:
+      - "latency"
+      - "p99"
+      - "slow response"
+      - "timeout"
+    # NOTE: 'python-performance.qls' is a placeholder. We will point to a specific
+    # performance-related query for this prototype.
+    codeql_suite: "python/ql/src/Security/CWE-730/ReDoS.ql" # A query for Regular Expression DoS
+
+  # Rule for Common Bugs and Reliability Issues
+  - name: "Reliability Scan"
+    alert_keywords:
+      - "error"
+      - "npe"
+      - "null pointer"
+      - "exception"
+      - "5xx"
+    codeql_suite: "python/ql/src/codeql-suites/python-code-quality.qls"
+
+  # A default fallback rule if no other keywords match
+  - name: "Default Scan"
+    alert_keywords: ["default"] # This will be our fallback
+    codeql_suite: "python/ql/src/codeql-suites/python-security-and-quality.qls"

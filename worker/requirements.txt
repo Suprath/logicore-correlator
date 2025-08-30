@@ -2,4 +2,5 @@
 celery==5.3.6
 redis==5.0.1
 SQLAlchemy==2.0.27
-psycopg2-binary==2.9.9 # PostgreSQL driver
+psycopg2-binary==2.9.9
+PyYAML==6.0.1 # <-- ADD THIS LINE

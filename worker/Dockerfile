@@ -52,6 +52,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the main application Python script
 COPY worker.py .
+COPY rules.yaml .
 
 # Expose a port (optional for worker, but good practice)
 # EXPOSE 8000 

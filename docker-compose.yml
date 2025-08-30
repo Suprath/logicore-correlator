@@ -53,6 +53,8 @@ services:
     build:
       context: ./worker
     container_name: logicore-worker-service
+    volumes:
+      - ./worker/rules.yaml:/app/rules.yaml:ro
     depends_on:
       - redis
       - postgres # New dependency
