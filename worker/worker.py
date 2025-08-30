@@ -1,4 +1,4 @@
-# FILE: worker/worker.py (Reverted to "Build-on-Demand" Logic)
+# FILE: worker/worker.py (with Git Caching Optimization)
 import os
 import subprocess
 import tempfile
@@ -9,6 +9,7 @@ from datetime import datetime
 from celery import Celery
 from sqlalchemy import create_engine, Column, String, Text, DateTime, JSON
 from sqlalchemy.orm import sessionmaker, declarative_base
+import shutil
 
 # --- (Database, Celery, CodeQL, and Rules setup is the same) ---
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -30,6 +31,10 @@ celery_app = Celery('tasks', broker=os.environ.get("CELERY_BROKER_URL"), backend
 celery_app.conf.update(task_serializer='json', result_serializer='json', accept_content=['json'], task_track_started=True)
 CODEQL_CLI_PATH = "codeql"
 CODEQL_QUERIES_ROOT = "/opt/codeql-repo"
+
+# --- NEW: Git Cache Configuration ---
+GIT_CACHE_DIR = "/data/git_cache"
+
 def load_rules():
     rules_path = os.path.join(os.path.dirname(__file__), 'rules.yaml')
     try:
@@ -39,6 +44,7 @@ def load_rules():
         return None
 RULES = load_rules()
 def select_query_suite(alert_summary: str) -> str:
+    # ... (function is correct and remains the same) ...
     if not RULES or not alert_summary: return os.path.join(CODEQL_QUERIES_ROOT, "python/ql/src/codeql-suites/python-security-and-quality.qls")
     summary_lower = alert_summary.lower()
     for rule in RULES.get('mappings', []):
@@ -51,7 +57,6 @@ def select_query_suite(alert_summary: str) -> str:
             print(f"INFO: No specific rule matched. Using default scan: '{rule.get('name')}'.", flush=True)
             return os.path.join(CODEQL_QUERIES_ROOT, rule.get('codeql_suite'))
     return os.path.join(CODEQL_QUERIES_ROOT, "python/ql/src/codeql-suites/python-security-and-quality.qls")
-
 def run_subprocess_shell(command_string: str, cwd: str = ".") -> int:
     """Helper function to run a command as a single string through the shell."""
     print(f"\n[SHELL_COMMAND]: {command_string}", flush=True)
@@ -63,7 +68,7 @@ def run_subprocess_shell(command_string: str, cwd: str = ".") -> int:
         print(line.strip(), flush=True)
     return process.wait()
 
-# --- Main Celery Task (Reverted Logic) ---
+# --- Main Celery Task (Updated with Git Caching) ---
 @celery_app.task(name='worker.run_analysis')
 def run_analysis(payload: dict):
     service_name = payload.get("service_name")
@@ -83,32 +88,46 @@ def run_analysis(payload: dict):
     
     print(f"--- [Worker] Starting analysis (ID: {analysis_id}) for {service_name} at {commit_hash} ---", flush=True)
 
+    repo_url = f"https://github.com/{service_name}.git"
+    # Create a unique path for the cached repo based on its name
+    local_repo_path = os.path.join(GIT_CACHE_DIR, service_name.replace('/', '_'))
+
     try:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # --- REVERTED WORKFLOW: Clone, Create DB, and Analyze ---
-            repo_url = f"https://github.com/{service_name}.git"
-            repo_path = os.path.join(temp_dir, "repo")
-            db_path = os.path.join(temp_dir, "codeql_db")
-
-            # 1. Clone the repository
-            if run_subprocess_shell(f"git clone {repo_url} {repo_path}") != 0:
+        # --- GIT CACHING LOGIC ---
+        if os.path.isdir(local_repo_path):
+            # 1. If repo exists in cache, just fetch the latest changes. This is fast.
+            print(f"INFO: Found repository in cache. Fetching updates for {service_name}...", flush=True)
+            run_subprocess_shell("git fetch --all", cwd=local_repo_path)
+        else:
+            # 2. If repo doesn't exist, clone it for the first time. This is slow.
+            print(f"INFO: Cloning {service_name} into cache for the first time...", flush=True)
+            os.makedirs(local_repo_path, exist_ok=True)
+            if run_subprocess_shell(f"git clone {repo_url} {local_repo_path}") != 0:
                 raise Exception("git clone failed")
+        
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # 3. Create a temporary, clean copy for this specific analysis.
+            # This prevents conflicts if two jobs for the same repo run at once.
+            work_dir = os.path.join(temp_dir, "repo")
+            print(f"INFO: Creating temporary work directory from cache at {work_dir}", flush=True)
+            shutil.copytree(local_repo_path, work_dir)
             
-            # 2. Check out the specific commit
-            if run_subprocess_shell(f"git checkout {commit_hash}", cwd=repo_path) != 0:
-                raise Exception("git checkout failed")
+            # 4. Check out the specific commit in the temporary copy.
+            if run_subprocess_shell(f"git checkout {commit_hash}", cwd=work_dir) != 0:
+                raise Exception(f"git checkout of commit {commit_hash} failed")
 
-            # 3. Create the CodeQL Database
-            create_db_cmd_str = f"{CODEQL_CLI_PATH} database create {db_path} --language=python --source-root={repo_path}"
+            # --- CodeQL DATABASE CREATION (UNCHANGED) ---
+            db_path = os.path.join(temp_dir, "codeql_db")
+            create_db_cmd_str = f"{CODEQL_CLI_PATH} database create {db_path} --language=python --source-root={work_dir}"
             if run_subprocess_shell(create_db_cmd_str) != 0:
                 raise Exception("CodeQL database creation failed")
             
-            # 4. Analyze the database (no need for finalize or bundle, `create` handles it)
+            # --- CodeQL ANALYSIS (UNCHANGED) ---
             results_path = os.path.join(temp_dir, "results.sarif")
             analyze_cmd_str = (
                 f"{CODEQL_CLI_PATH} database analyze {db_path} "
-                f"{query_to_run} "
-                f"--format=sarif-latest --output={results_path}"
+                f"'{query_to_run}' " # Quote the path to be safe
+                f"--format=sarif-latest --output='{results_path}'"
             )
             if run_subprocess_shell(analyze_cmd_str) != 0:
                 raise Exception("CodeQL analysis failed.")

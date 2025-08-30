@@ -56,6 +56,7 @@ services:
     volumes:
       - ./worker/rules.yaml:/app/rules.yaml:ro
       - ./artifacts:/data/artifacts:ro
+      - git-cache-volume:/data/git_cache
     depends_on:
       - redis
       - postgres # New dependency
@@ -85,3 +86,4 @@ networks:
 
 volumes:
   postgres-data: # New named volume for Postgres
+  git-cache-volume:
