@@ -1,44 +1,51 @@
 # FILE: worker/rules.yaml
 
-# This file maps keywords found in an incident alert's summary
-# to the appropriate CodeQL query suite (.qls file) to run.
-# The first rule that has a keyword matching the alert summary will be used.
+# Maps keywords from an incident alert summary to the appropriate CodeQL query suite.
+# The first rule with a matching keyword will be used.
 
 mappings:
-  # Rule for Security Vulnerabilities
+  # --- HIGH-PRIORITY: Security Scan ---
+  # Triggered by keywords related to security events.
   - name: "Security and Quality Scan"
-    # If any of these keywords are in the alert summary (case-insensitive)
     alert_keywords:
       - "vulnerability"
       - "suspicious"
       - "injection"
       - "xss"
       - "cross-site"
-    # ...then run this CodeQL query suite.
+      - "unauthorized"
+      - "security"
+    # This is the most comprehensive security suite.
     codeql_suite: "python/ql/src/codeql-suites/python-security-and-quality.qls"
 
-  # Rule for Performance Issues
+  # --- MEDIUM-PRIORITY: Reliability / Crash Analysis ---
+  # Triggered by keywords related to application errors and crashes.
+  - name: "Reliability and Error Scan"
+    alert_keywords:
+      - "error"
+      - "exception"
+      - "npe"
+      - "null pointer"
+      - "crash"
+      - "5xx"
+      - "500"
+      - "503"
+    # This suite finds common bug patterns that lead to crashes.
+    codeql_suite: "python/ql/src/codeql-suites/python-code-quality.qls"
+
+  # --- MEDIUM-PRIORITY: Performance Analysis ---
+  # Triggered by keywords related to slowness.
   - name: "Performance Scan"
     alert_keywords:
       - "latency"
       - "p99"
-      - "slow response"
+      - "slow"
       - "timeout"
-    # NOTE: 'python-performance.qls' is a placeholder. We will point to a specific
-    # performance-related query for this prototype.
-    codeql_suite: "python/ql/src/Security/CWE-730/ReDoS.ql" # A query for Regular Expression DoS
+    # This suite finds performance-related issues like potential ReDoS.
+    codeql_suite: "python/ql/src/codeql-suites/python-performance.qls"
 
-  # Rule for Common Bugs and Reliability Issues
-  - name: "Reliability Scan"
-    alert_keywords:
-      - "error"
-      - "npe"
-      - "null pointer"
-      - "exception"
-      - "5xx"
-    codeql_suite: "python/ql/src/codeql-suites/python-code-quality.qls"
-
-  # A default fallback rule if no other keywords match
-  - name: "Default Scan"
-    alert_keywords: ["default"] # This will be our fallback
+  # --- DEFAULT: Fallback Scan ---
+  # If no other keywords match, run a general security scan.
+  - name: "Default Security Scan"
+    alert_keywords: ["default"] 
     codeql_suite: "python/ql/src/codeql-suites/python-security-and-quality.qls"

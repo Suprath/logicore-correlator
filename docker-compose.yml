@@ -57,6 +57,7 @@ services:
       - ./worker/rules.yaml:/app/rules.yaml:ro
       - ./artifacts:/data/artifacts:ro
       - git-cache-volume:/data/git_cache
+      - codeql-cache-volume:/root/.codeql/cache
     depends_on:
       - redis
       - postgres # New dependency
@@ -68,7 +69,7 @@ services:
       # NEW: DB connection details for the worker
       - DATABASE_URL=postgresql://correlator_user:a_very_secure_password@postgres:5432/correlator_db
       - GITHUB_TOKEN=${GITHUB_TOKEN}
-    mem_limit: 4g
+    mem_limit: 7g
 
   ngrok:
     image: ngrok/ngrok:latest
@@ -87,3 +88,4 @@ networks:
 volumes:
   postgres-data: # New named volume for Postgres
   git-cache-volume:
+  codeql-cache-volume:
